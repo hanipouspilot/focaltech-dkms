@@ -474,19 +474,45 @@ static int psmouse_poll(struct psmouse *psmouse)
 			   PSMOUSE_CMD_POLL | (psmouse->pktsize << 8));
 }
 
+static bool psmouse_check_pnp_id(const char *id, const char * const ids[])
+{
+	int i;
+
+	for (i = 0; ids[i]; i++)
+		if (!strcasecmp(id, ids[i]))
+			return true;
+
+	return false;
+}
+
 /*
  * psmouse_matches_pnp_id - check if psmouse matches one of the passed in ids.
  */
 bool psmouse_matches_pnp_id(struct psmouse *psmouse, const char * const ids[])
 {
-	int i;
+	struct serio *serio = psmouse->ps2dev.serio;
+	char *p, *fw_id_copy, *save_ptr;
+	bool found = false;
 
-	if (!strncmp(psmouse->ps2dev.serio->firmware_id, "PNP:", 4))
-		for (i = 0; ids[i]; i++)
-			if (strstr(psmouse->ps2dev.serio->firmware_id, ids[i]))
-				return true;
+	if (strncmp(serio->firmware_id, "PNP: ", 5))
+		return false;
 
-	return false;
+	fw_id_copy = kstrndup(&serio->firmware_id[5],
+			      sizeof(serio->firmware_id) - 5,
+			      GFP_KERNEL);
+	if (!fw_id_copy)
+		return false;
+
+	save_ptr = fw_id_copy;
+	while ((p = strsep(&fw_id_copy, " ")) != NULL) {
+		if (psmouse_check_pnp_id(p, ids)) {
+			found = true;
+			break;
+		}
+	}
+
+	kfree(save_ptr);
+	return found;
 }
 
 /*
@@ -737,16 +763,19 @@ static int psmouse_extensions(struct psmouse *psmouse,
 
 /* Always check for focaltech, this is safe as it uses pnp-id matching */
 	if (psmouse_do_detect(focaltech_detect, psmouse, set_properties) == 0) {
-		if (!set_properties || focaltech_init(psmouse) == 0) {
-			/*
-			 * Not supported yet, use bare protocol.
-			 * Note that we need to also restrict
-			 * psmouse_max_proto so that psmouse_initialize()
-			 * does not try to reset rate and resolution,
-			 * because even that upsets the device.
-			 */
-			psmouse_max_proto = PSMOUSE_PS2;
-			return PSMOUSE_PS2;
+		if (max_proto > PSMOUSE_IMEX) {
+			if (!set_properties || focaltech_init(psmouse) == 0) {
+				if (IS_ENABLED(CONFIG_MOUSE_PS2_FOCALTECH))
+					return PSMOUSE_FOCALTECH;
+				/*
+				 * Note that we need to also restrict
+				 * psmouse_max_proto so that psmouse_initialize()
+				 * does not try to reset rate and resolution,
+				 * because even that upsets the device.
+				 */
+				psmouse_max_proto = PSMOUSE_PS2;
+				return PSMOUSE_PS2;
+			}
 		}
 	}
 
@@ -785,7 +814,7 @@ static int psmouse_extensions(struct psmouse *psmouse,
  * Try activating protocol, but check if support is enabled first, since
  * we try detecting Synaptics even when protocol is disabled.
  */
-			if (synaptics_supported() &&
+			if (IS_ENABLED(CONFIG_MOUSE_PS2_SYNAPTICS) &&
 			    (!set_properties || synaptics_init(psmouse) == 0)) {
 				return PSMOUSE_SYNAPTICS;
 			}
@@ -810,7 +839,7 @@ static int psmouse_extensions(struct psmouse *psmouse,
  */
 	if (max_proto > PSMOUSE_IMEX &&
 			cypress_detect(psmouse, set_properties) == 0) {
-		if (cypress_supported()) {
+		if (IS_ENABLED(CONFIG_MOUSE_PS2_CYPRESS)) {
 			if (cypress_init(psmouse) == 0)
 				return PSMOUSE_CYPRESS;
 
