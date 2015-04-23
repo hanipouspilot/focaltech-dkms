@@ -88,6 +88,13 @@ struct focaltech_finger_state {
 	 */
 	unsigned int x;
 	unsigned int y;
+
+	/*
+	* Finger width 0-7 and 15 for 'latching'
+	* 15 value stays until the finger is released
+	* Width is reported only when 1 finger is active
+	*/
+	unsigned int width;
 };
 
 /*
@@ -103,16 +110,6 @@ struct focaltech_hw_state {
 
 	/* True if the clickpad has been pressed. */
 	bool pressed;
-
-	/*
-	* Finger width 0-7 and 15 for 'latching'
-	* 15 value stays until the finger is released
-	* Width is reported only when 1 finger is active
-	*/
-	unsigned int width;
-
-	/* Finger count */
-	unsigned int count;
 };
 
 struct focaltech_data {
@@ -120,7 +117,7 @@ struct focaltech_data {
 	struct focaltech_hw_state state;
 };
 
-static void focaltech_report_state(struct psmouse *psmouse)
+static void focaltech_report_state(struct psmouse *psmouse, bool abs)
 {
 	struct focaltech_data *priv = psmouse->private;
 	struct focaltech_hw_state *state = &priv->state;
@@ -145,12 +142,11 @@ static void focaltech_report_state(struct psmouse *psmouse)
 			input_report_abs(dev, ABS_MT_POSITION_X, clamped_x);
 			input_report_abs(dev, ABS_MT_POSITION_Y,
 					 priv->y_max - clamped_y);
-			if (state->count == 1)
-				input_report_abs(dev, ABS_TOOL_WIDTH, state->width);
+			if (abs)
+				input_report_abs(dev, ABS_TOOL_WIDTH, finger->width);
 		}
 	}
-	input_mt_report_finger_count(dev, state->count);	
-	input_mt_report_pointer_emulation(dev, false);
+	input_mt_report_pointer_emulation(dev, true);
 	input_report_key(psmouse->dev, BTN_LEFT, state->pressed);
 	input_sync(psmouse->dev);
 }
@@ -162,7 +158,6 @@ static void focaltech_process_touch_packet(struct psmouse *psmouse,
 	struct focaltech_hw_state *state = &priv->state;
 	unsigned char fingers = packet[1];
 	int i;
-	int count = 0;
 
 	state->pressed = (packet[0] >> 4) & 1;
 
@@ -170,7 +165,7 @@ static void focaltech_process_touch_packet(struct psmouse *psmouse,
 	for (i = 0; i < FOC_MAX_FINGERS; i++) {
 		if (fingers & 0x1) {
 			state->fingers[i].active = true;
-			count++;
+			
 		} else {
 			/*
 			 * Even when the finger becomes active again, we still
@@ -180,7 +175,7 @@ static void focaltech_process_touch_packet(struct psmouse *psmouse,
 		}
 		fingers >>= 1;
 	}
-	state->count = count;
+	
 }
 
 static void focaltech_process_abs_packet(struct psmouse *psmouse,
@@ -201,7 +196,7 @@ static void focaltech_process_abs_packet(struct psmouse *psmouse,
 
 	state->fingers[finger].x = ((packet[1] & 0xf) << 8) | packet[2];
 	state->fingers[finger].y = (packet[3] << 8) | packet[4];
-	state->width = packet[5] >> 4;
+	state->fingers[finger].width = packet[5] >> 4;
 	state->fingers[finger].valid = true;
 }
 
@@ -243,22 +238,23 @@ static void focaltech_process_packet(struct psmouse *psmouse)
 	switch (packet[0] & 0xf) {
 	case FOC_TOUCH:
 		focaltech_process_touch_packet(psmouse, packet);
+		focaltech_report_state(psmouse, false);
 		break;
 
 	case FOC_ABS:
 		focaltech_process_abs_packet(psmouse, packet);
+		focaltech_report_state(psmouse, true);
 		break;
 
 	case FOC_REL:
 		focaltech_process_rel_packet(psmouse, packet);
+		focaltech_report_state(psmouse, false);
 		break;
 
 	default:
 		psmouse_err(psmouse, "Unknown packet type: %02x\n", packet[0]);
 		break;
 	}
-
-	focaltech_report_state(psmouse);
 }
 
 static psmouse_ret_t focaltech_process_byte(struct psmouse *psmouse)
