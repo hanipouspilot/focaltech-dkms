@@ -88,13 +88,6 @@ struct focaltech_finger_state {
 	 */
 	unsigned int x;
 	unsigned int y;
-
-	/*
-	* Finger width 0-7 and 15 for 'latching'
-	* 15 value stays until the finger is released
-	* Width is reported only when 1 finger is active
-	*/
-	unsigned int width;
 };
 
 /*
@@ -110,6 +103,16 @@ struct focaltech_hw_state {
 
 	/* True if the clickpad has been pressed. */
 	bool pressed;
+
+	/*
+	* Finger width 0-7 and 15 for a very big contact area.
+	* 15 value stays until the finger is released.
+	* Width is reported only in absolute packets.
+	* Since hardware reports width only for last touching finger,
+	* there is no need to store width for every specific finger, so 
+	* we keep only last value reported.
+	*/
+	unsigned int width;
 };
 
 struct focaltech_data {
@@ -143,7 +146,7 @@ static void focaltech_report_state(struct psmouse *psmouse, bool abs)
 			input_report_abs(dev, ABS_MT_POSITION_Y,
 					 priv->y_max - clamped_y);
 			if (abs)
-				input_report_abs(dev, ABS_TOOL_WIDTH, finger->width);
+				input_report_abs(dev, ABS_TOOL_WIDTH, state->width);
 		}
 	}
 	input_mt_report_pointer_emulation(dev, true);
@@ -196,7 +199,7 @@ static void focaltech_process_abs_packet(struct psmouse *psmouse,
 
 	state->fingers[finger].x = ((packet[1] & 0xf) << 8) | packet[2];
 	state->fingers[finger].y = (packet[3] << 8) | packet[4];
-	state->fingers[finger].width = packet[5] >> 4;
+	state->width = packet[5] >> 4;
 	state->fingers[finger].valid = true;
 }
 
