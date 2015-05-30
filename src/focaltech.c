@@ -120,7 +120,7 @@ struct focaltech_data {
 	struct focaltech_hw_state state;
 };
 
-static void focaltech_report_state(struct psmouse *psmouse, bool abs)
+static void focaltech_report_state(struct psmouse *psmouse)
 {
 	struct focaltech_data *priv = psmouse->private;
 	struct focaltech_hw_state *state = &priv->state;
@@ -145,8 +145,7 @@ static void focaltech_report_state(struct psmouse *psmouse, bool abs)
 			input_report_abs(dev, ABS_MT_POSITION_X, clamped_x);
 			input_report_abs(dev, ABS_MT_POSITION_Y,
 					 priv->y_max - clamped_y);
-			if (abs)
-				input_report_abs(dev, ABS_TOOL_WIDTH, state->width);
+			input_report_abs(dev, ABS_TOOL_WIDTH, state->width);
 		}
 	}
 	input_mt_report_pointer_emulation(dev, true);
@@ -241,23 +240,22 @@ static void focaltech_process_packet(struct psmouse *psmouse)
 	switch (packet[0] & 0xf) {
 	case FOC_TOUCH:
 		focaltech_process_touch_packet(psmouse, packet);
-		focaltech_report_state(psmouse, false);
 		break;
 
 	case FOC_ABS:
 		focaltech_process_abs_packet(psmouse, packet);
-		focaltech_report_state(psmouse, true);
 		break;
 
 	case FOC_REL:
 		focaltech_process_rel_packet(psmouse, packet);
-		focaltech_report_state(psmouse, false);
 		break;
 
 	default:
 		psmouse_err(psmouse, "Unknown packet type: %02x\n", packet[0]);
 		break;
 	}
+
+	focaltech_report_state(psmouse);
 }
 
 static psmouse_ret_t focaltech_process_byte(struct psmouse *psmouse)
